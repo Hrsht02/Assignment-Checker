@@ -187,13 +187,20 @@ async def get_evaluation(
     eval_r = (await db.execute(select(EvaluationReport).where(EvaluationReport.submission_id == submission_id))).scalar_one_or_none()
     if not eval_r:
         raise HTTPException(status_code=404, detail="Evaluation not yet available")
+    import json
     return {
         "id": eval_r.id,
         "submission_id": eval_r.submission_id,
         "ai_score": eval_r.ai_score,
+        "percentage": eval_r.percentage,
+        "grade": eval_r.grade,
         "strengths": eval_r.strengths,
         "areas_of_improvement": eval_r.areas_of_improvement,
+        "missing_points": eval_r.missing_points,
+        "suggestions": eval_r.suggestions,
+        "overall_feedback": eval_r.overall_feedback,
         "detailed_feedback": eval_r.detailed_feedback,
+        "rubric_breakdown": json.loads(eval_r.rubric_breakdown or "{}"),
         "created_at": eval_r.created_at.isoformat(),
     }
 
