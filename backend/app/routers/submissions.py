@@ -129,14 +129,57 @@ async def list_submissions(
         student = await db.get(User, sub.student_id)
         eval_r = (await db.execute(select(EvaluationReport).where(EvaluationReport.submission_id == sub.id))).scalar_one_or_none()
         override = (await db.execute(select(MarksOverride).where(MarksOverride.submission_id == sub.id))).scalar_one_or_none()
+        
+        ai_score = eval_r.ai_score if eval_r else None
+        final_score = override.revised_score if override else ai_score
+        
+        # Compute percentage and grade from final score
+        pct: float | None = None
+        grade: str | None = None
+        if final_score is not None and a.max_marks > 0:
+            pct = round(final_score / a.max_marks * 100, 1)
+            if pct >= 90: grade = "A+"
+            elif pct >= 80: grade = "A"
+            elif pct >= 70: grade = "B+"
+            elif pct >= 60: grade = "B"
+            elif pct >= 50: grade = "C"
+            elif pct >= 40: grade = "D"
+            else: grade = "F"
+        
+        # Get matched student name for plagiarism display
+        matched_student_name: str | None = None
+        if sub.matched_submission_id:
+            matched_sub = await db.get(Submission, sub.matched_submission_id)
+            if matched_sub:
+                matched_user = await db.get(User, matched_sub.student_id)
+                if matched_user:
+                    matched_student_name = matched_user.name
+
         d = _sub_dict(sub)
         d.update({
             "student_name": student.name if student else "",
             "student_roll": student.roll_number if student else "",
-            "ai_score": eval_r.ai_score if eval_r else None,
-            "final_score": override.revised_score if override else (eval_r.ai_score if eval_r else None),
+            "student_email": student.email if student else "",
+            "ai_score": ai_score,
+            "final_score": final_score,
+            "percentage": pct,
+            "grade": grade,
             "professor_remark": override.remark if override else None,
             "has_evaluation": eval_r is not None,
+            # Full AI feedback fields for expanded panel
+            "strengths": eval_r.strengths if eval_r else None,
+            "areas_of_improvement": eval_r.areas_of_improvement if eval_r else None,
+            "missing_points": eval_r.missing_points if eval_r else None,
+            "suggestions": eval_r.suggestions if eval_r else None,
+            "overall_feedback": eval_r.overall_feedback if eval_r else None,
+            # Plagiarism details
+            "matched_student_name": matched_student_name,
+            "plagiarism_label": (
+                "Exact Copy" if sub.similarity_score and sub.similarity_score >= 0.99 else
+                "High Risk" if sub.similarity_score and sub.similarity_score >= 0.7 else
+                "Warning" if sub.similarity_score and sub.similarity_score >= 0.4 else
+                "Safe"
+            ) if sub.similarity_score is not None else None,
         })
         out.append(d)
     return out

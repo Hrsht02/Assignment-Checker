@@ -1,15 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+import asyncio
+import json
+import io
+import csv
 
-from app.database import get_db
+from app.database import get_db, AsyncSessionLocal
 from app.models.academic import ProfessorSemester, Semester, Branch, Course, College, StudentEnrollment
 from app.models.assignment import Assignment, AssignmentStatus
 from app.models.submission import Submission, SubmissionStatus
 from app.models.evaluation import EvaluationReport
+from app.models.marks import MarksOverride
 from app.models.report import MarksReport
 from app.models.user import User
-from app.dependencies import require_professor
+from app.dependencies import require_professor, get_current_user
 
 router = APIRouter(prefix="/professor", tags=["professor"])
 
@@ -193,3 +199,158 @@ async def trigger_report(
     from app.tasks.evaluation_tasks import safe_delay
     safe_delay(generate_marks_report_task, str(assignment_id))
     return {"message": "Report generation triggered"}
+
+
+# ── SSE: real-time updates for professor ─────────────────────────────────────
+
+@router.get("/live/{assignment_id}")
+async def professor_live(
+    assignment_id: str,
+    current_user: User = Depends(require_professor),
+):
+    """SSE endpoint — pushes submission stats every 10s so professor UI auto-refreshes."""
+    async def event_generator():
+        try:
+            while True:
+                async with AsyncSessionLocal() as db:
+                    subs = (await db.execute(
+                        select(Submission).where(Submission.assignment_id == assignment_id)
+                    )).scalars().all()
+                    total = len(subs)
+                    evaluated = sum(1 for s in subs if s.status == SubmissionStatus.EVALUATED)
+                    pending = sum(1 for s in subs if s.status == SubmissionStatus.EVALUATING)
+                    flagged = sum(1 for s in subs if s.status == SubmissionStatus.SIMILARITY_REVIEW)
+                    payload = json.dumps({
+                        "type": "submission_update",
+                        "total": total, "evaluated": evaluated,
+                        "pending": pending, "flagged": flagged,
+                    })
+                yield f"data: {payload}\n\n"
+                await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Export submissions as CSV / Excel ─────────────────────────────────────────
+
+@router.get("/assignments/{assignment_id}/export/csv")
+async def export_csv(
+    assignment_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_professor),
+):
+    rows = await _build_export_rows(assignment_id, current_user.id, db)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()) if rows else [])
+    writer.writeheader()
+    writer.writerows(rows)
+    return StreamingResponse(
+        iter([buf.getvalue().encode("utf-8")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=report_{assignment_id[:8]}.csv"},
+    )
+
+
+@router.get("/assignments/{assignment_id}/export/excel")
+async def export_excel(
+    assignment_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_professor),
+):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    rows = await _build_export_rows(assignment_id, current_user.id, db)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Submissions"
+    if rows:
+        headers = list(rows[0].keys())
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="2563EB")
+        for row in rows:
+            ws.append([row[h] for h in headers])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=report_{assignment_id[:8]}.xlsx"},
+    )
+
+
+async def _build_export_rows(assignment_id: str, professor_id: str, db) -> list[dict]:
+    a = await db.get(Assignment, assignment_id)
+    if not a or a.created_by != professor_id:
+        raise HTTPException(status_code=403, detail="Access not permitted")
+
+    enrollments = (await db.execute(
+        select(StudentEnrollment).where(StudentEnrollment.semester_id == a.semester_id)
+    )).scalars().all()
+
+    rows = []
+    for enr in enrollments:
+        student = await db.get(User, enr.student_id)
+        if not student:
+            continue
+        sub = (await db.execute(
+            select(Submission).where(
+                Submission.assignment_id == a.id,
+                Submission.student_id == student.id,
+                Submission.status != SubmissionStatus.REJECTED,
+            ).order_by(Submission.submitted_at.desc())
+        )).scalar_one_or_none()
+
+        if not sub:
+            rows.append({
+                "Student": student.name, "Roll No": student.roll_number or "N/A",
+                "Email": student.email, "Status": "Not Submitted",
+                "Marks": "", "Total Marks": a.max_marks, "Percentage": "", "Grade": "",
+                "Strengths": "", "Weaknesses": "", "Missing Points": "", "Suggestions": "",
+                "Overall Remarks": "", "Plagiarism %": "", "Plagiarism Status": "", "Submitted At": "",
+            })
+            continue
+
+        eval_r = (await db.execute(
+            select(EvaluationReport).where(EvaluationReport.submission_id == sub.id)
+        )).scalar_one_or_none()
+        override = (await db.execute(
+            select(MarksOverride).where(MarksOverride.submission_id == sub.id)
+        )).scalar_one_or_none()
+
+        final_score = override.revised_score if override else (eval_r.ai_score if eval_r else None)
+        pct = round(final_score / a.max_marks * 100, 1) if final_score is not None and a.max_marks > 0 else None
+        grade = eval_r.grade if eval_r else ""
+        sim_pct = round(sub.similarity_score * 100, 1) if sub.similarity_score else ""
+        sim_status = (
+            "Exact Copy" if sub.similarity_score and sub.similarity_score >= 0.99 else
+            "High Risk" if sub.similarity_score and sub.similarity_score >= 0.7 else
+            "Warning" if sub.similarity_score and sub.similarity_score >= 0.4 else
+            "Safe"
+        ) if sub.similarity_score else "Safe"
+
+        rows.append({
+            "Student": student.name, "Roll No": student.roll_number or "N/A",
+            "Email": student.email, "Status": sub.status.value,
+            "Marks": final_score, "Total Marks": a.max_marks,
+            "Percentage": f"{pct}%" if pct is not None else "",
+            "Grade": grade,
+            "Strengths": eval_r.strengths if eval_r else "",
+            "Weaknesses": eval_r.areas_of_improvement if eval_r else "",
+            "Missing Points": eval_r.missing_points if eval_r else "",
+            "Suggestions": eval_r.suggestions if eval_r else "",
+            "Overall Remarks": eval_r.overall_feedback if eval_r else "",
+            "Plagiarism %": sim_pct,
+            "Plagiarism Status": sim_status,
+            "Submitted At": sub.submitted_at.strftime("%Y-%m-%d %H:%M UTC"),
+        })
+
+    return rows

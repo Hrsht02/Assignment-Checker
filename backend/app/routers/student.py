@@ -230,14 +230,22 @@ async def _compute_stats(db: AsyncSession, student_id: str) -> dict:
             Submission.status == SubmissionStatus.EVALUATED,
         )
     ) or 0
+    # Compute real average score
+    score_rows = (await db.execute(
+        select(EvaluationReport.ai_score, Assignment.max_marks)
+        .join(Submission, Submission.id == EvaluationReport.submission_id)
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Submission.student_id == student_id, Submission.status == SubmissionStatus.EVALUATED)
+    )).all()
+    avg_score = round(sum(r[0]/r[1]*100 for r in score_rows if r[1]>0)/len(score_rows), 1) if score_rows else 0.0
+
     return {
         "total_assigned": total_assigned,
         "total_submitted": total_submitted,
         "total_evaluated": total_evaluated,
-        "average_score_percentage": 0.0,
+        "average_score_percentage": avg_score,
         "pending": total_submitted - total_evaluated,
     }
-
 
 async def _get_assignments(db: AsyncSession, student_id: str, semester_id: str) -> dict:
     now = datetime.now(timezone.utc)
