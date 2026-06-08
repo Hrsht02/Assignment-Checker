@@ -108,6 +108,78 @@ async def get_report(
     }
 
 
+@router.get("/analytics/summary")
+async def get_analytics_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_professor),
+):
+    """Aggregate analytics across all professor's semesters."""
+    ps_result = (await db.execute(
+        select(ProfessorSemester).where(ProfessorSemester.professor_id == current_user.id)
+    )).scalars().all()
+
+    semester_ids = [ps.semester_id for ps in ps_result]
+    if not semester_ids:
+        return {"total_assignments": 0, "total_students": 0, "total_submissions": 0,
+                "total_evaluated": 0, "pending_evaluations": 0, "plagiarism_cases": 0,
+                "average_score_percentage": 0.0}
+
+    total_assignments = await db.scalar(
+        select(func.count(Assignment.id)).where(
+            Assignment.semester_id.in_(semester_ids),
+            Assignment.status != AssignmentStatus.DELETED,
+        )
+    ) or 0
+
+    total_students = await db.scalar(
+        select(func.count(func.distinct(StudentEnrollment.student_id))).where(
+            StudentEnrollment.semester_id.in_(semester_ids)
+        )
+    ) or 0
+
+    total_submissions = await db.scalar(
+        select(func.count(Submission.id))
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Assignment.semester_id.in_(semester_ids))
+    ) or 0
+
+    total_evaluated = await db.scalar(
+        select(func.count(Submission.id))
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Assignment.semester_id.in_(semester_ids), Submission.status == SubmissionStatus.EVALUATED)
+    ) or 0
+
+    pending = await db.scalar(
+        select(func.count(Submission.id))
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Assignment.semester_id.in_(semester_ids), Submission.status == SubmissionStatus.EVALUATING)
+    ) or 0
+
+    plagiarism = await db.scalar(
+        select(func.count(Submission.id))
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Assignment.semester_id.in_(semester_ids), Submission.status == SubmissionStatus.SIMILARITY_REVIEW)
+    ) or 0
+
+    scores = (await db.execute(
+        select(EvaluationReport.ai_score, Assignment.max_marks)
+        .join(Submission, Submission.id == EvaluationReport.submission_id)
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .where(Assignment.semester_id.in_(semester_ids))
+    )).all()
+    avg = round(sum(r[0] / r[1] * 100 for r in scores if r[1] > 0) / len(scores), 1) if scores else 0.0
+
+    return {
+        "total_assignments": total_assignments,
+        "total_students": total_students,
+        "total_submissions": total_submissions,
+        "total_evaluated": total_evaluated,
+        "pending_evaluations": pending,
+        "plagiarism_cases": plagiarism,
+        "average_score_percentage": avg,
+    }
+
+
 @router.post("/reports/{assignment_id}/generate")
 async def trigger_report(
     assignment_id: str,

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { FileText, Users, Clock, ChevronRight } from 'lucide-react'
+import { FileText, Users, Clock, ChevronRight, Send, CheckCircle, AlertTriangle, BarChart2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { TopBar } from '../../components/layout/TopBar'
 import { StatCard } from '../../components/ui/StatCard'
@@ -23,6 +23,16 @@ interface SemesterDashboard {
   }
 }
 
+interface AnalyticsSummary {
+  total_assignments: number
+  total_students: number
+  total_submissions: number
+  total_evaluated: number
+  pending_evaluations: number
+  plagiarism_cases: number
+  average_score_percentage: number
+}
+
 export default function ProfessorDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ['professor-dashboard'],
@@ -33,32 +43,42 @@ export default function ProfessorDashboard() {
     refetchInterval: 60_000,
   })
 
-  const semesters = data?.semesters ?? []
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: ['professor-analytics-summary'],
+    queryFn: async () => {
+      const res = await api.get('/professor/analytics/summary')
+      return res.data as AnalyticsSummary
+    },
+    refetchInterval: 30_000,
+  })
 
-  const totals = semesters.reduce(
-    (acc, s) => ({
-      assignments: acc.assignments + s.analytics.total_assignments,
-      students: acc.students + s.analytics.total_students,
-      pending: acc.pending + s.analytics.pending_evaluations,
-    }),
-    { assignments: 0, students: 0, pending: 0 }
-  )
+  const semesters = data?.semesters ?? []
 
   return (
     <div>
       <TopBar title="Dashboard" subtitle="Your teaching overview" />
       <div className="p-6 space-y-6">
-        {isLoading ? (
+        {isLoading || summaryLoading ? (
           <div className="flex justify-center py-12"><Spinner className="h-8 w-8" /></div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <StatCard label="Total Assignments" value={totals.assignments} icon={FileText}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard label="Total Assignments" value={summary?.total_assignments ?? 0} icon={FileText}
                 iconBg="bg-blue-50" iconColor="text-blue-600" />
-              <StatCard label="Total Students" value={totals.students} icon={Users}
+              <StatCard label="Total Students" value={summary?.total_students ?? 0} icon={Users}
                 iconBg="bg-violet-50" iconColor="text-violet-600" />
-              <StatCard label="Pending Evaluations" value={totals.pending} icon={Clock}
+              <StatCard label="Total Submissions" value={summary?.total_submissions ?? 0} icon={Send}
+                iconBg="bg-sky-50" iconColor="text-sky-600" />
+              <StatCard label="Evaluated" value={summary?.total_evaluated ?? 0} icon={CheckCircle}
+                iconBg="bg-green-50" iconColor="text-green-600" />
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard label="Pending Evaluations" value={summary?.pending_evaluations ?? 0} icon={Clock}
                 iconBg="bg-orange-50" iconColor="text-orange-600" />
+              <StatCard label="Plagiarism Cases" value={summary?.plagiarism_cases ?? 0} icon={AlertTriangle}
+                iconBg="bg-red-50" iconColor="text-red-600" />
+              <StatCard label="Average Score" value={`${summary?.average_score_percentage ?? 0}%`} icon={BarChart2}
+                iconBg="bg-teal-50" iconColor="text-teal-600" />
             </div>
 
             {semesters.length === 0 ? (
