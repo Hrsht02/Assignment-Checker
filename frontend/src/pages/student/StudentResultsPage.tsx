@@ -8,7 +8,7 @@ import api from '../../lib/api'
 import { formatDateTime } from '../../lib/utils'
 
 interface SectionData {
-  section: { id: string; name: string; subject: string; semester_name: string }
+  semester: { id: string; name: string; course: string; branch: string; college: string }
   assignments: {
     evaluated: Array<{
       id: string
@@ -38,7 +38,7 @@ export default function StudentResultsPage() {
 
   const sections = dashboard?.sections ?? []
   const allEvaluated = sections.flatMap((s) =>
-    (s.assignments.evaluated ?? []).map((a) => ({ ...a, subject: s.section.subject }))
+    (s.assignments?.evaluated ?? []).map((a) => ({ ...a, subject: s.semester?.course ?? s.semester?.name ?? '' }))
   )
 
   const avgScore = allEvaluated.length

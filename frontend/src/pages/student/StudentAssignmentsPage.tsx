@@ -27,7 +27,7 @@ interface AssignmentItem {
 }
 
 interface SectionData {
-  section: { id: string; name: string; subject: string; semester_name: string }
+  semester: { id: string; name: string; course: string; branch: string; college: string }
   assignments: Record<TabKey, AssignmentItem[]>
 }
 
@@ -50,10 +50,10 @@ export default function StudentAssignmentsPage() {
   })
 
   const sections = dashboard?.sections ?? []
-  const itemsForTab = sections.flatMap((s) => s.assignments[tab] ?? [])
+  const itemsForTab = sections.flatMap((s) => s.assignments?.[tab] ?? [])
 
   const counts = TABS.reduce((acc, t) => {
-    acc[t.key] = sections.flatMap((s) => s.assignments[t.key] ?? []).length
+    acc[t.key] = sections.flatMap((s) => s.assignments?.[t.key] ?? []).length
     return acc
   }, {} as Record<TabKey, number>)
 

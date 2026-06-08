@@ -271,6 +271,23 @@ function SubmissionResult({ submission, assignment }: { submission: any; assignm
         </div>
       )}
 
+      {/* Show download link for submitted PDF */}
+      {submission.submission_type === 'pdf' && submission.file_url && (
+        <a href={submission.file_url} target="_blank" rel="noopener noreferrer"
+          className="btn-secondary inline-flex text-sm">
+          <FileText className="h-4 w-4" />
+          Download Submitted PDF ({submission.file_name ?? 'submission.pdf'})
+        </a>
+      )}
+
+      {/* Show submitted text content */}
+      {submission.submission_type === 'text' && submission.text_content && (
+        <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
+          <p className="text-xs font-semibold text-gray-500 mb-2">Your Submitted Answer</p>
+          <p className="text-sm text-gray-700 whitespace-pre-line font-mono">{submission.text_content}</p>
+        </div>
+      )}
+
       {isEvaluated && finalScore != null && (
         <>
           <div className="flex items-center gap-4">

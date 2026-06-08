@@ -26,7 +26,7 @@ interface AssignmentItem {
 }
 
 interface SectionData {
-  section: { id: string; name: string; subject: string; semester_name: string }
+  semester: { id: string; name: string; course: string; branch: string; college: string }
   assignments: {
     active: AssignmentItem[]
     upcoming: AssignmentItem[]
@@ -52,8 +52,8 @@ export default function StudentDashboard() {
     },
   })
 
-  const allActive = dashboard?.sections.flatMap((s) => s.assignments.active) ?? []
-  const allSubmitted = dashboard?.sections.flatMap((s) => s.assignments.submitted) ?? []
+  const allActive = (dashboard?.sections ?? []).flatMap((s) => s.assignments?.active ?? [])
+  const allSubmitted = (dashboard?.sections ?? []).flatMap((s) => s.assignments?.submitted ?? [])
 
   return (
     <div>

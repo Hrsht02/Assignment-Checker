@@ -35,8 +35,8 @@ export default function StudentsPage() {
   })
 
   const allSemesters = (hierarchy?.courses ?? []).flatMap(c =>
-    c.branches.flatMap(b =>
-      b.semesters.map(s => ({ id: s.id, label: `${c.name} → ${b.name} → ${s.name}` }))
+    (c.branches ?? []).flatMap(b =>
+      (b.semesters ?? []).map(s => ({ id: s.id, label: `${c.name} → ${b.name} → ${s.name}` }))
     )
   )
 

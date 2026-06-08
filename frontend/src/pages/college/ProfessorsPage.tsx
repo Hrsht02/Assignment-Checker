@@ -36,8 +36,8 @@ export default function ProfessorsPage() {
 
   // Flat list of all semesters with breadcrumb
   const allSemesters = (hierarchy?.courses ?? []).flatMap(c =>
-    c.branches.flatMap(b =>
-      b.semesters.map(s => ({ id: s.id, label: `${c.name} → ${b.name} → ${s.name}` }))
+    (c.branches ?? []).flatMap(b =>
+      (b.semesters ?? []).map(s => ({ id: s.id, label: `${c.name} → ${b.name} → ${s.name}` }))
     )
   )
 
