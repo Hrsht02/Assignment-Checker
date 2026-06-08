@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import warnings
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -10,7 +11,12 @@ from app.config import get_settings
 from app.models.user import User, UserStatus
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# passlib 1.7.4 tries to read bcrypt.__about__.__version__ which was removed
+# in bcrypt 4.x — suppress the resulting AttributeError warning.
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=UserWarning)
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
