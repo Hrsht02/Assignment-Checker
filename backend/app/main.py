@@ -5,8 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import engine, Base
+from app.config import get_settings
 from app.routers import auth, org_admin, college_admin, assignments, submissions, professor, student, notifications
 from app.tasks.scheduler import start_scheduler, scheduler
+
+settings = get_settings()
 
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
@@ -14,14 +17,10 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    # Seed default org admin
     from app.seed import seed
     await seed()
-
     start_scheduler()
     yield
     scheduler.shutdown(wait=False)
@@ -34,9 +33,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Build allowed origins list — hardcoded + any extras from CORS_ORIGINS env var
+_cors_origins = [
+    "https://assignment-checker-two.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+if settings.CORS_ORIGINS:
+    _cors_origins += [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
