@@ -3,7 +3,6 @@ from typing import Optional
 import warnings
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -12,19 +11,43 @@ from app.models.user import User, UserStatus
 
 settings = get_settings()
 
-# passlib 1.7.4 tries to read bcrypt.__about__.__version__ which was removed
-# in bcrypt 4.x — suppress the resulting AttributeError warning.
+# ── bcrypt via passlib ────────────────────────────────────────────────────────
+# passlib 1.7.4 reads bcrypt.__about__.__version__ which was removed in
+# bcrypt 4.x — suppress the AttributeError/UserWarning it raises.
 with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=UserWarning)
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    warnings.filterwarnings("ignore")
+    try:
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        _USE_PASSLIB = True
+    except Exception:
+        _USE_PASSLIB = False
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash a password using bcrypt. Falls back to direct bcrypt if passlib fails."""
+    if _USE_PASSLIB:
+        try:
+            return pwd_context.hash(password)
+        except Exception:
+            pass
+    # Direct bcrypt fallback (bcrypt 4.x)
+    import bcrypt
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash."""
+    if _USE_PASSLIB:
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            pass
+    import bcrypt
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except Exception:
+        return False
 
 
 def create_access_token(user_id: str, role: str) -> str:
