@@ -5,10 +5,16 @@ import api from '../lib/api'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
 
+function homeForRole(role: string) {
+  if (role === 'org_admin') return '/org'
+  if (role === 'college_admin') return '/college-admin'
+  if (role === 'professor') return '/professor'
+  return '/student'
+}
+
 export function useLogin() {
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
-
   return useMutation({
     mutationFn: async (data: { email: string; password: string }) => {
       const res = await api.post('/auth/login', data)
@@ -16,36 +22,10 @@ export function useLogin() {
     },
     onSuccess: ({ access_token, user }) => {
       setAuth(user, access_token)
-      redirectByRole(user.role, navigate)
-    },
-    onError: () => {
-      toast.error('Invalid email/phone or password')
-    },
-  })
-}
-
-export function useSignup() {
-  const { setAuth } = useAuthStore()
-  const navigate = useNavigate()
-
-  return useMutation({
-    mutationFn: async (data: {
-      name: string
-      email: string
-      password: string
-      role: string
-      roll_number?: string
-    }) => {
-      const res = await api.post('/auth/signup', data)
-      return res.data as { access_token: string; user: User }
-    },
-    onSuccess: ({ access_token, user }) => {
-      setAuth(user, access_token)
-      toast.success(`Welcome, ${user.name}!`)
-      redirectByRole(user.role, navigate)
+      navigate(homeForRole(user.role))
     },
     onError: (err: any) => {
-      toast.error(err.response?.data?.detail ?? 'Signup failed. Please try again.')
+      toast.error(err.response?.data?.detail ?? 'Invalid credentials')
     },
   })
 }
@@ -53,26 +33,13 @@ export function useSignup() {
 export function useLogout() {
   const { clearAuth } = useAuthStore()
   const navigate = useNavigate()
-
-  return () => {
-    clearAuth()
-    navigate('/login')
-  }
+  return () => { clearAuth(); navigate('/login') }
 }
 
 export function useMe() {
   return useQuery({
     queryKey: ['me'],
-    queryFn: async () => {
-      const res = await api.get('/auth/me')
-      return res.data as User
-    },
+    queryFn: async () => (await api.get('/auth/me')).data as User,
     staleTime: 5 * 60 * 1000,
   })
-}
-
-function redirectByRole(role: string, navigate: ReturnType<typeof useNavigate>) {
-  if (role === 'admin') navigate('/admin')
-  else if (role === 'professor') navigate('/professor')
-  else navigate('/student')
 }

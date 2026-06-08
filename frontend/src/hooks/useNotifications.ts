@@ -9,7 +9,13 @@ export function useNotifications() {
       const res = await api.get('/notifications')
       return res.data as { notifications: Notification[]; unread_count: number }
     },
-    refetchInterval: 30_000, // poll every 30 seconds
+    refetchInterval: 30_000,
+    // Don't retry on 4xx — avoids hammering the server with 403s when token is stale
+    retry: (failureCount, error: any) => {
+      const status = error?.response?.status
+      if (status && status >= 400 && status < 500) return false
+      return failureCount < 2
+    },
   })
 }
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, FileText, Calendar, Hash, Trash2, Pencil } from 'lucide-react'
+import { Plus, FileText, Calendar, Hash, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TopBar } from '../../components/layout/TopBar'
 import { Modal } from '../../components/ui/Modal'
@@ -27,18 +27,18 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 export default function SectionPage() {
-  const { sectionId } = useParams<{ sectionId: string }>()
+  const { sectionId: semesterId } = useParams<{ sectionId: string }>()  // route param is sectionId but holds a semester ID
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Assignment | null>(null)
 
   const { data: assignments = [], isLoading } = useQuery({
-    queryKey: ['section-assignments', sectionId],
+    queryKey: ['semester-assignments', semesterId],
     queryFn: async () => {
-      const res = await api.get(`/assignments/sections/${sectionId}`)
+      const res = await api.get(`/assignments/semesters/${semesterId}`)
       return res.data as Assignment[]
     },
-    enabled: !!sectionId,
+    enabled: !!semesterId,
   })
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
@@ -54,13 +54,13 @@ export default function SectionPage() {
       form.append('deadline', new Date(data.deadline).toISOString())
       form.append('rubric', data.rubric)
       if (data.question_text) form.append('question_text', data.question_text)
-      return api.post(`/assignments/sections/${sectionId}`, form, {
+      return api.post(`/assignments/semesters/${semesterId}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
     },
     onSuccess: () => {
       toast.success('Assignment created')
-      qc.invalidateQueries({ queryKey: ['section-assignments', sectionId] })
+      qc.invalidateQueries({ queryKey: ['semester-assignments', semesterId] })
       setShowCreate(false)
       reset()
     },
@@ -71,7 +71,7 @@ export default function SectionPage() {
     mutationFn: (id: string) => api.delete(`/assignments/${id}?confirmed=true`),
     onSuccess: () => {
       toast.success('Assignment deleted')
-      qc.invalidateQueries({ queryKey: ['section-assignments', sectionId] })
+      qc.invalidateQueries({ queryKey: ['semester-assignments', semesterId] })
       setDeleteTarget(null)
     },
     onError: (e: any) => toast.error(e.response?.data?.detail ?? 'Failed to delete'),
@@ -79,7 +79,7 @@ export default function SectionPage() {
 
   return (
     <div>
-      <TopBar title="Section Assignments" subtitle="Manage assignments for this section" />
+      <TopBar title="Semester Assignments" subtitle="Manage assignments for this semester" />
       <div className="p-6 space-y-4">
         <div className="flex justify-end">
           <button className="btn-primary" onClick={() => setShowCreate(true)}>

@@ -1,23 +1,59 @@
-# Node
-node_modules/
-
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
 .venv/
 venv/
-
-# Environment
-.env
-.env.*
-
-# Build
+env/
+ENV/
+*.egg-info/
 dist/
 build/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
 
-# Database
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# Keep .env.example tracked
+!.env.example
+
+# ── Database ──────────────────────────────────────────────────────────────────
 *.db
+*.sqlite3
 dev.db
 
-# Logs
+# ── Uploads (local dev only) ──────────────────────────────────────────────────
+backend/uploads/
+
+# ── Node ─────────────────────────────────────────────────────────────────────
+node_modules/
+.npm
+
+# ── Frontend build ────────────────────────────────────────────────────────────
+frontend/dist/
+frontend/.vercel/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
+logs/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+check_auth.py
+backend/check_auth.py
+package-lock.json

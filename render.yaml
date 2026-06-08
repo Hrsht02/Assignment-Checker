@@ -1,0 +1,103 @@
+services:
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  - type: web
+    name: ai-academic-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-academic-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: GEMINI_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: ai-academic-redis
+          type: redis
+          property: connectionString
+      - key: APP_URL
+        sync: false          # set to your Vercel frontend URL
+      - key: SIMILARITY_THRESHOLD
+        value: "0.95"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "20"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  - type: worker
+    name: ai-academic-worker
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-academic-db
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          name: ai-academic-backend
+          type: web
+          envVarKey: SECRET_KEY
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: ai-academic-redis
+          type: redis
+          property: connectionString
+      - key: SIMILARITY_THRESHOLD
+        value: "0.95"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "20"
+
+# ── PostgreSQL ───────────────────────────────────────────────────────────────
+databases:
+  - name: ai-academic-db
+    databaseName: academic_platform
+    user: academic_user
+    plan: free
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+  - name: ai-academic-redis
+    type: redis
+    plan: free
+    maxmemoryPolicy: noeviction

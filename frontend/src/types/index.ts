@@ -1,40 +1,75 @@
-export type UserRole = 'admin' | 'professor' | 'student'
-export type UserStatus = 'active' | 'inactive' | 'pending'
+// ── Users ─────────────────────────────────────────────────────────────────────
+
+export type UserRole = 'org_admin' | 'college_admin' | 'professor' | 'student'
+export type UserStatus = 'active' | 'inactive'
 
 export interface User {
   id: string
   name: string
   email: string
+  phone?: string
   role: UserRole
   status: UserStatus
+  college_id?: string
   roll_number?: string
+  professor_id?: string
   created_at: string
+}
+
+// ── Academic hierarchy ────────────────────────────────────────────────────────
+
+export interface College {
+  id: string
+  name: string
+  description?: string
+  is_active: boolean
+  admin_count?: number
+}
+
+export interface Course {
+  id: string
+  college_id?: string
+  name: string
+}
+
+export interface Branch {
+  id: string
+  course_id?: string
+  name: string
 }
 
 export interface Semester {
   id: string
+  branch_id?: string
   name: string
-  start_date: string
-  end_date: string
-  created_at: string
-  sections?: Section[]
 }
 
-export interface Section {
+export interface HierarchyCourse {
   id: string
-  semester_id: string
   name: string
-  subject: string
-  created_at: string
-  enrolled_students?: number
-  assigned_professors?: number
+  branches: HierarchyBranch[]
 }
 
-export type AssignmentStatus = 'draft' | 'active' | 'closed' | 'deleted'
+export interface HierarchyBranch {
+  id: string
+  name: string
+  semesters: { id: string; name: string }[]
+}
+
+export interface Hierarchy {
+  college_id?: string
+  id?: string
+  name?: string
+  courses: HierarchyCourse[]
+}
+
+// ── Assignments ───────────────────────────────────────────────────────────────
+
+export type AssignmentStatus = 'active' | 'closed' | 'deleted'
 
 export interface Assignment {
   id: string
-  section_id: string
+  semester_id: string
   created_by: string
   title: string
   description: string
@@ -45,64 +80,50 @@ export interface Assignment {
   deadline: string
   status: AssignmentStatus
   created_at: string
-  updated_at: string
   submission_count?: number
-  evaluated_count?: number
 }
 
+// ── Submissions ───────────────────────────────────────────────────────────────
+
+export type SubmissionType = 'pdf' | 'text'
 export type SubmissionStatus =
-  | 'submitted'
-  | 'similarity_review'
-  | 'evaluating'
-  | 'evaluated'
-  | 'extraction_failed'
-  | 'evaluation_failed'
-  | 'rejected'
-  | 'resubmission_requested'
+  | 'submitted' | 'similarity_review' | 'evaluating' | 'evaluated'
+  | 'extraction_failed' | 'evaluation_failed' | 'rejected' | 'resubmission_requested'
 
 export interface Submission {
   id: string
   assignment_id: string
   student_id: string
-  file_url: string
-  file_name: string
+  submission_type: SubmissionType
+  file_url?: string
+  file_name?: string
+  text_content?: string
   status: SubmissionStatus
   similarity_score?: number
-  matched_submission_id?: string
   is_resubmission: boolean
-  resubmission_deadline?: string
   rejection_reason?: string
+  resubmission_deadline?: string
   submitted_at: string
-  updated_at: string
-  // enriched fields
+  // enriched
   student_name?: string
-  student_email?: string
+  student_roll?: string
   student_roll_number?: string
-  assignment_title?: string
   ai_score?: number
   final_score?: number
   professor_remark?: string
   has_evaluation?: boolean
+  strengths?: string
+  areas_of_improvement?: string
+  detailed_feedback?: string
 }
 
 export interface EvaluationReport {
   id: string
   submission_id: string
+  ai_score: number
   strengths: string
   areas_of_improvement: string
-  ai_score: number
   detailed_feedback: string
-  created_at: string
-  updated_at: string
-}
-
-export interface MarksOverride {
-  id: string
-  submission_id: string
-  professor_id: string
-  original_ai_score: number
-  revised_score: number
-  remark: string
   created_at: string
 }
 
@@ -118,6 +139,14 @@ export interface Notification {
   created_at: string
 }
 
+export interface StudentAssignmentStats {
+  total_assigned: number
+  total_submitted: number
+  total_evaluated: number
+  average_score_percentage: number
+}
+
+
 export interface AdminDashboardStats {
   total_students: number
   total_professors: number
@@ -125,16 +154,4 @@ export interface AdminDashboardStats {
   total_submissions: number
   pending_evaluations: number
   average_performance: number
-}
-
-export interface ProfessorSectionAnalytics {
-  section_id: string
-  section_name: string
-  subject: string
-  total_assignments: number
-  total_students: number
-  average_marks_percentage: number
-  submission_rate: number
-  plagiarism_rate: number
-  pending_evaluations: number
 }

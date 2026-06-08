@@ -1,27 +1,49 @@
+# ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy==2.0.30
 alembic==1.13.1
-asyncpg==0.29.0
-psycopg2-binary==2.9.9
-pydantic==2.7.1
-pydantic-settings==2.2.1
+asyncpg==0.29.0          # PostgreSQL async driver (production)
+aiosqlite==0.20.0        # SQLite async driver (dev fallback)
+psycopg2-binary==2.9.9   # psycopg2 for alembic sync migrations
+
+# ── Auth / Security ────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+
+# ── Validation ────────────────────────────────────────────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
 python-multipart==0.0.9
-pymupdf==1.24.14
+
+# ── AI / ML ───────────────────────────────────────────────────────────────────
 google-generativeai==0.5.4
 sentence-transformers==2.7.0
-faiss-cpu>=1.12.0
-langgraph>=0.2.0
-langchain-core==0.2.5
+faiss-cpu==1.8.0
+langgraph==0.2.0
+langchain-core==0.2.38
+numpy==1.26.4
+
+# ── PDF Processing ─────────────────────────────────────────────────────────────
+pymupdf==1.24.14
+pillow==10.4.0
+
+# ── Storage ───────────────────────────────────────────────────────────────────
 boto3==1.34.110
+
+# ── Email ─────────────────────────────────────────────────────────────────────
 resend==0.8.0
-celery[redis]==5.3.6
-redis==5.0.4
-openpyxl==3.1.2
+
+# ── Task Queue ────────────────────────────────────────────────────────────────
+celery[redis]==5.4.0
+redis==5.0.7
+
+# ── Reports ───────────────────────────────────────────────────────────────────
+openpyxl==3.1.5
 reportlab==4.2.0
+
+# ── HTTP / Scheduler ──────────────────────────────────────────────────────────
 httpx==0.27.0
 apscheduler==3.10.4
-numpy==1.26.4
-pillow==10.4.0

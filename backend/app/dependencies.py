@@ -16,24 +16,31 @@ async def get_current_user(
 ) -> User:
     try:
         payload = decode_token(credentials.credentials)
-        user_id: str = payload["sub"]          # stored as plain string now
+        user_id: str = payload["sub"]
     except (JWTError, KeyError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
     user = await get_user_by_id(db, user_id)
     if not user or user.status != UserStatus.ACTIVE:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return user
 
 
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != UserRole.ADMIN:
+async def require_org_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != UserRole.ORG_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access not permitted")
+    return current_user
+
+
+async def require_college_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != UserRole.COLLEGE_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access not permitted")
+    return current_user
+
+
+async def require_admin_any(current_user: User = Depends(get_current_user)) -> User:
+    """Either org_admin or college_admin."""
+    if current_user.role not in (UserRole.ORG_ADMIN, UserRole.COLLEGE_ADMIN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access not permitted")
     return current_user
 
@@ -48,11 +55,3 @@ async def require_student(current_user: User = Depends(get_current_user)) -> Use
     if current_user.role != UserRole.STUDENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access not permitted")
     return current_user
-
-
-def require_role(*roles: UserRole):
-    async def _check(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access not permitted")
-        return current_user
-    return _check

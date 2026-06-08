@@ -8,8 +8,13 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
       staleTime: 30_000,
+      // Never retry 4xx errors — only retry network/5xx failures
+      retry: (failureCount, error: any) => {
+        const status = error?.response?.status
+        if (status && status >= 400 && status < 500) return false
+        return failureCount < 2
+      },
     },
   },
 })

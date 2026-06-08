@@ -6,13 +6,15 @@ import type { UserRole } from './types'
 // Auth
 import LoginPage from './pages/LoginPage'
 
-// Admin
-import AdminDashboard from './pages/admin/AdminDashboard'
-import UsersPage from './pages/admin/UsersPage'
-import SemestersPage from './pages/admin/SemestersPage'
-import SemesterDetailPage from './pages/admin/SemesterDetailPage'
-import AdminReportsPage from './pages/admin/AdminReportsPage'
-import AdminSettingsPage from './pages/admin/AdminSettingsPage'
+// Org Admin
+import OrgDashboard from './pages/org/OrgDashboard'
+import CollegesPage from './pages/org/CollegesPage'
+
+// College Admin
+import CollegeAdminDashboard from './pages/college/CollegeAdminDashboard'
+import CollegeStructurePage from './pages/college/StructurePage'
+import ProfessorsPage from './pages/college/ProfessorsPage'
+import StudentsPage from './pages/college/StudentsPage'
 
 // Professor
 import ProfessorDashboard from './pages/professor/ProfessorDashboard'
@@ -32,26 +34,28 @@ import NotFoundPage from './pages/NotFoundPage'
 
 // ── Route Guards ──────────────────────────────────────────────────────────────
 
-function RequireAuth({ children, role }: { children: React.ReactNode; role?: UserRole }) {
+function RequireAuth({ children, role }: { children: React.ReactNode; role?: UserRole | UserRole[] }) {
   const { user, token } = useAuthStore()
-
   if (!token || !user) return <Navigate to="/login" replace />
 
-  if (role && user.role !== role) {
-    const home = user.role === 'admin' ? '/admin' : user.role === 'professor' ? '/professor' : '/student'
-    return <Navigate to={home} replace />
+  const allowed = role ? (Array.isArray(role) ? role : [role]) : null
+  if (allowed && !allowed.includes(user.role)) {
+    return <Navigate to={homeFor(user.role)} replace />
   }
-
   return <>{children}</>
 }
 
 function GuestOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
-  if (user) {
-    const home = user.role === 'admin' ? '/admin' : user.role === 'professor' ? '/professor' : '/student'
-    return <Navigate to={home} replace />
-  }
+  if (user) return <Navigate to={homeFor(user.role)} replace />
   return <>{children}</>
+}
+
+function homeFor(role: string) {
+  if (role === 'org_admin')     return '/org'
+  if (role === 'college_admin') return '/college-admin'
+  if (role === 'professor')     return '/professor'
+  return '/student'
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -64,29 +68,36 @@ export default function App() {
         <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
         <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* Admin */}
-        <Route path="/admin" element={<RequireAuth role="admin"><AppLayout /></RequireAuth>}>
-          <Route index element={<AdminDashboard />} />
-          <Route path="users" element={<UsersPage />} />
-          <Route path="semesters" element={<SemestersPage />} />
-          <Route path="semesters/:semesterId" element={<SemesterDetailPage />} />
-          <Route path="reports" element={<AdminReportsPage />} />
-          <Route path="settings" element={<AdminSettingsPage />} />
+        {/* ── Org Admin ── */}
+        <Route path="/org" element={<RequireAuth role="org_admin"><AppLayout /></RequireAuth>}>
+          <Route index element={<OrgDashboard />} />
+          <Route path="colleges" element={<CollegesPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="settings" element={<PlaceholderPage text="Platform settings coming soon." />} />
         </Route>
 
-        {/* Professor */}
+        {/* ── College Admin ── */}
+        <Route path="/college-admin" element={<RequireAuth role="college_admin"><AppLayout /></RequireAuth>}>
+          <Route index element={<CollegeAdminDashboard />} />
+          <Route path="structure" element={<CollegeStructurePage />} />
+          <Route path="professors" element={<ProfessorsPage />} />
+          <Route path="students" element={<StudentsPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="reports" element={<PlaceholderPage text="Reports generated after assignment deadlines appear here." />} />
+        </Route>
+
+        {/* ── Professor ── */}
         <Route path="/professor" element={<RequireAuth role="professor"><AppLayout /></RequireAuth>}>
           <Route index element={<ProfessorDashboard />} />
           <Route path="assignments" element={<ProfessorAssignmentsPage />} />
           <Route path="assignments/:assignmentId" element={<AssignmentDetailPage />} />
           <Route path="sections/:sectionId" element={<SectionPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="submissions" element={<div className="p-8 text-gray-400">Select an assignment to view submissions.</div>} />
-          <Route path="reports" element={<div className="p-8 text-gray-400">Trigger reports from an assignment's detail page.</div>} />
+          <Route path="submissions" element={<PlaceholderPage text="Select an assignment to view its submissions." />} />
+          <Route path="reports" element={<PlaceholderPage text="Trigger reports from an assignment detail page." />} />
         </Route>
 
-        {/* Student */}
+        {/* ── Student ── */}
         <Route path="/student" element={<RequireAuth role="student"><AppLayout /></RequireAuth>}>
           <Route index element={<StudentDashboard />} />
           <Route path="assignments" element={<StudentAssignmentsPage />} />
@@ -99,5 +110,13 @@ export default function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
+  )
+}
+
+function PlaceholderPage({ text }: { text: string }) {
+  return (
+    <div className="flex items-center justify-center h-64 text-sm text-gray-400 p-8 text-center">
+      {text}
+    </div>
   )
 }

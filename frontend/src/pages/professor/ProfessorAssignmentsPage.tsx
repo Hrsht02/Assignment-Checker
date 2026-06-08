@@ -9,10 +9,11 @@ import api from '../../lib/api'
 import type { Assignment } from '../../types'
 import { formatDateTime, isDeadlinePast } from '../../lib/utils'
 
-interface SectionGroup {
-  section_id: string
-  section_name: string
-  subject: string
+interface SemesterGroup {
+  semester_id: string
+  semester_name: string
+  branch_name: string
+  course_name: string
   assignments: Assignment[]
 }
 
@@ -21,34 +22,34 @@ export default function ProfessorAssignmentsPage() {
     queryKey: ['professor-all-assignments'],
     queryFn: async () => {
       const res = await api.get('/assignments/professor/my-assignments')
-      return res.data as SectionGroup[]
+      return res.data as SemesterGroup[]
     },
   })
 
   return (
     <div>
-      <TopBar title="Assignments" subtitle="All assignments across your sections" />
+      <TopBar title="Assignments" subtitle="All assignments across your semesters" />
       <div className="p-6 space-y-6">
         {isLoading ? (
           <div className="flex justify-center py-12"><Spinner className="h-8 w-8" /></div>
         ) : data.length === 0 ? (
-          <EmptyState icon={FileText} title="No assignments" description="Create assignments from a section page." />
+          <EmptyState icon={FileText} title="No assignments" description="Create assignments from a semester page." />
         ) : (
           data.map((group) => (
-            <div key={group.section_id}>
+            <div key={group.semester_id}>
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-gray-900">{group.subject}</h2>
-                  <p className="text-xs text-gray-400">{group.section_name}</p>
+                  <h2 className="text-sm font-semibold text-gray-900">{group.course_name}</h2>
+                  <p className="text-xs text-gray-400">{group.branch_name} → {group.semester_name}</p>
                 </div>
-                <Link to={`/professor/sections/${group.section_id}`}
+                <Link to={`/professor/sections/${group.semester_id}`}
                   className="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-1">
-                  Manage section <ChevronRight className="h-3 w-3" />
+                  Manage semester <ChevronRight className="h-3 w-3" />
                 </Link>
               </div>
 
               {group.assignments.length === 0 ? (
-                <p className="text-sm text-gray-400 py-3">No assignments in this section.</p>
+                <p className="text-sm text-gray-400 py-3">No assignments in this semester.</p>
               ) : (
                 <div className="space-y-2">
                   {group.assignments.map((a) => (
