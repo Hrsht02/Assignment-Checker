@@ -1,3 +1,7 @@
+"""
+Celery tasks for AI evaluation, similarity detection, and deadline reminders.
+"""
+import asyncio
 from app.tasks.celery_app import celery_app
 from app.config import get_settings
 
@@ -5,8 +9,6 @@ settings = get_settings()
 
 
 def _run_async(coro):
-    """Run an async coroutine from a sync Celery task."""
-    import asyncio
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -14,249 +16,219 @@ def _run_async(coro):
         loop.close()
 
 
-def _celery_available() -> bool:
-    """Return True only if Redis broker is reachable."""
-    try:
-        celery_app.control.inspect(timeout=1).ping()
-        return True
-    except Exception:
-        return False
-
-
 def safe_delay(task_fn, *args, **kwargs):
-    """
-    Dispatch a Celery task only when the broker is reachable.
-    In dev (no Redis), silently skips so the API still works.
-    """
+    """Dispatch Celery task, silently skip if broker unavailable (dev mode)."""
     try:
         task_fn.delay(*args, **kwargs)
     except Exception as e:
-        print(f"[Celery DEV] Task {task_fn.name} skipped (broker unavailable): {e}")
+        print(f"[Celery DEV] Task {getattr(task_fn, 'name', str(task_fn))} skipped: {e}")
 
+
+# ── Main evaluation task ──────────────────────────────────────────────────────
 
 @celery_app.task(name="evaluate_submission", bind=True, max_retries=2)
 def evaluate_submission_task(self, submission_id: str):
-    """
-    Main evaluation task:
-    1. Run similarity check
-    2. If not flagged/rejected, run AI evaluation
-    3. Update submission status and notify
-    """
-    _run_async(_evaluate_submission_async(submission_id))
+    _run_async(_evaluate_async(submission_id))
 
 
-async def _evaluate_submission_async(submission_id: str):
+async def _evaluate_async(submission_id: str):
+    import json
     from app.database import AsyncSessionLocal
-    from app.models.submission import Submission, SubmissionStatus
+    from app.models.submission import Submission, SubmissionStatus, SubmissionType
     from app.models.assignment import Assignment
     from app.models.evaluation import EvaluationReport
     from app.models.notification import NotificationType
     from app.services import notification as notif_svc
-    from app.services import email as email_svc
     from app.services.evaluation_pipeline import run_evaluation
-    from app.services.similarity import (
-        compute_embedding, find_most_similar, compute_text_hash
-    )
-    from app.services.pdf_processor import extract_text_from_pdf
+    from app.services.similarity import compute_embedding, find_most_similar
     from sqlalchemy import select
-    import httpx
 
     async with AsyncSessionLocal() as db:
-        # Load submission with assignment
-        result = await db.execute(
-            select(Submission)
-            .where(Submission.id == uuid.UUID(submission_id))
-        )
-        submission = result.scalar_one_or_none()
-        if not submission:
+        sub = (await db.execute(select(Submission).where(Submission.id == submission_id))).scalar_one_or_none()
+        if not sub:
             return
 
-        result = await db.execute(
-            select(Assignment).where(Assignment.id == submission.assignment_id)
-        )
-        assignment = result.scalar_one_or_none()
-        if not assignment:
+        a = await db.get(Assignment, sub.assignment_id)
+        if not a:
             return
 
-        # ── 1. Similarity check ───────────────────────────────────────────
-        try:
-            response = httpx.get(submission.file_url, timeout=30)
-            response.raise_for_status()
-            pdf_bytes = response.content
-        except Exception:
-            submission.status = SubmissionStatus.EXTRACTION_FAILED
+        # ── Step 1: Get text content for similarity check ─────────────────
+        if sub.submission_type == SubmissionType.TEXT:
+            content_text = sub.text_content or ""
+        else:
+            # PDF — extract text first for similarity
+            content_text = await _get_text_for_submission(sub)
+
+        if not content_text.strip():
+            sub.status = SubmissionStatus.EXTRACTION_FAILED
             await db.commit()
-            return
-
-        try:
-            extracted_text, _ = extract_text_from_pdf(pdf_bytes)
-        except Exception:
-            extracted_text = ""
-
-        if not extracted_text.strip():
-            submission.status = SubmissionStatus.EXTRACTION_FAILED
-            await db.commit()
-            # Notify professor
             await notif_svc.create_notification(
-                db, assignment.created_by,
-                NotificationType.EXTRACTION_FAILED,
+                db, a.created_by, NotificationType.EXTRACTION_FAILED,
                 "Extraction Failed",
-                f"Text extraction failed for a submission in '{assignment.title}'.",
-                reference_id=submission.id, reference_type="submission"
+                f"Could not extract text from a submission for '{a.title}'.",
+                reference_id=sub.id, reference_type="submission",
             )
             await db.commit()
             return
 
-        # Get all accepted submissions for this assignment (not this one)
-        accepted_result = await db.execute(
+        # ── Step 2: Similarity check ──────────────────────────────────────
+        prior_subs = (await db.execute(
             select(Submission).where(
-                Submission.assignment_id == submission.assignment_id,
-                Submission.id != submission.id,
+                Submission.assignment_id == sub.assignment_id,
+                Submission.id != sub.id,
                 Submission.status.in_([
-                    SubmissionStatus.SUBMITTED,
-                    SubmissionStatus.EVALUATING,
-                    SubmissionStatus.EVALUATED,
+                    SubmissionStatus.SUBMITTED, SubmissionStatus.EVALUATING, SubmissionStatus.EVALUATED,
                 ])
             )
-        )
-        prior_submissions = accepted_result.scalars().all()
+        )).scalars().all()
 
-        if prior_submissions:
-            # Build embeddings for prior submissions
-            prior_texts = []
-            prior_ids = []
-            prior_embeddings = []
-
-            for ps in prior_submissions:
-                # Try to get extracted text from evaluation report
-                eval_result = await db.execute(
-                    select(EvaluationReport).where(EvaluationReport.submission_id == ps.id)
-                )
-                eval_report = eval_result.scalar_one_or_none()
-                prior_text = eval_report.extracted_text if eval_report else None
-
-                if not prior_text:
-                    # Extract from PDF
-                    try:
-                        pr = httpx.get(ps.file_url, timeout=30)
-                        pt, _ = extract_text_from_pdf(pr.content)
-                        prior_text = pt
-                    except Exception:
-                        continue
-
-                if prior_text:
-                    prior_texts.append(prior_text)
-                    prior_ids.append(str(ps.id))
-                    prior_embeddings.append(compute_embedding(prior_text))
+        if prior_subs:
+            prior_embeddings, prior_ids = [], []
+            for ps in prior_subs:
+                pt = await _get_text_for_submission(ps)
+                if pt:
+                    prior_embeddings.append(compute_embedding(pt))
+                    prior_ids.append(ps.id)
 
             if prior_embeddings:
-                query_embedding = compute_embedding(extracted_text)
-                best_id, best_score = find_most_similar(
-                    query_embedding, prior_embeddings, prior_ids
-                )
-
-                submission.similarity_score = best_score
+                query_emb = compute_embedding(content_text)
+                best_id, best_score = find_most_similar(query_emb, prior_embeddings, prior_ids)
+                sub.similarity_score = best_score
                 if best_id:
-                    submission.matched_submission_id = uuid.UUID(best_id)
+                    sub.matched_submission_id = best_id
 
                 if best_score >= settings.SIMILARITY_THRESHOLD:
-                    # Flag for professor review
-                    submission.status = SubmissionStatus.SIMILARITY_REVIEW
+                    sub.status = SubmissionStatus.SIMILARITY_REVIEW
                     await db.commit()
 
-                    # Notify professor
                     from app.models.user import User
-                    prof_result = await db.execute(
-                        select(User).where(User.id == assignment.created_by)
-                    )
-                    professor = prof_result.scalar_one_or_none()
-
+                    professor = await db.get(User, a.created_by)
                     await notif_svc.create_notification(
-                        db, assignment.created_by,
-                        NotificationType.PLAGIARISM_FLAGGED,
+                        db, a.created_by, NotificationType.PLAGIARISM_FLAGGED,
                         "Similarity Flagged",
-                        f"A submission for '{assignment.title}' has a similarity score of "
-                        f"{best_score:.1%}. Please review.",
-                        reference_id=submission.id, reference_type="submission"
+                        f"Submission for '{a.title}' has {best_score:.1%} similarity. Please review.",
+                        reference_id=sub.id, reference_type="submission",
                     )
-
                     if professor:
                         from app.services.email import send_email
-                        student_result = await db.execute(
-                            select(User).where(User.id == submission.student_id)
-                        )
-                        student = student_result.scalar_one_or_none()
                         await send_email(
                             professor.email,
-                            f"Similarity Flagged: {assignment.title}",
-                            f"<p>A submission by {student.name if student else 'a student'} "
-                            f"for <strong>{assignment.title}</strong> has a similarity score "
-                            f"of {best_score:.1%}. Please review in your dashboard.</p>"
+                            f"Similarity Alert: {a.title}",
+                            f"<p>A submission has {best_score:.1%} similarity. Please review in your dashboard.</p>",
                         )
-
                     await db.commit()
-                    return  # Don't proceed to AI evaluation
+                    return
 
-        # ── 2. AI Evaluation ──────────────────────────────────────────────
-        submission.status = SubmissionStatus.EVALUATING
+        # ── Step 3: AI Evaluation ─────────────────────────────────────────
+        sub.status = SubmissionStatus.EVALUATING
         await db.commit()
 
         state = run_evaluation(
-            submission_id=str(submission.id),
-            assignment_id=str(assignment.id),
-            file_url=submission.file_url,
-            assignment_title=assignment.title,
-            assignment_description=assignment.description,
-            rubric=assignment.rubric,
-            max_marks=assignment.max_marks,
+            submission_id=sub.id,
+            assignment_id=a.id,
+            submission_type=sub.submission_type.value,
+            assignment_title=a.title,
+            assignment_description=a.description,
+            rubric=a.rubric or "",
+            max_marks=a.max_marks,
+            file_url=sub.file_url,
+            text_content=sub.text_content,
         )
 
         if state["status"] == "extraction_failed":
-            submission.status = SubmissionStatus.EXTRACTION_FAILED
+            sub.status = SubmissionStatus.EXTRACTION_FAILED
             await db.commit()
             await notif_svc.create_notification(
-                db, assignment.created_by,
-                NotificationType.EXTRACTION_FAILED,
+                db, a.created_by, NotificationType.EXTRACTION_FAILED,
                 "Extraction Failed",
-                f"Could not extract text from a submission in '{assignment.title}'.",
-                reference_id=submission.id, reference_type="submission"
+                f"Text extraction failed for '{a.title}' submission.",
+                reference_id=sub.id, reference_type="submission",
             )
             await db.commit()
             return
 
         if state["status"] == "evaluation_failed":
-            submission.status = SubmissionStatus.EVALUATION_FAILED
+            sub.status = SubmissionStatus.EVALUATION_FAILED
             await db.commit()
             await notif_svc.create_notification(
-                db, assignment.created_by,
-                NotificationType.EVALUATION_FAILED,
+                db, a.created_by, NotificationType.EVALUATION_FAILED,
                 "Evaluation Failed",
-                f"AI evaluation failed for a submission in '{assignment.title}'.",
-                reference_id=submission.id, reference_type="submission"
+                f"AI evaluation failed for '{a.title}' submission.",
+                reference_id=sub.id, reference_type="submission",
             )
             await db.commit()
             return
 
-        # Store evaluation report
-        eval_report = EvaluationReport(
-            submission_id=submission.id,
-            strengths=state["strengths"] or "",
-            areas_of_improvement=state["areas_of_improvement"] or "",
-            ai_score=state["ai_score"],
-            detailed_feedback=state["detailed_feedback"] or "",
+        # ── Step 4: Store report ──────────────────────────────────────────
+        # Remove old report if re-evaluating
+        old_report = (await db.execute(
+            select(EvaluationReport).where(EvaluationReport.submission_id == sub.id)
+        )).scalar_one_or_none()
+        if old_report:
+            await db.delete(old_report)
+            await db.flush()
+
+        report = EvaluationReport(
+            submission_id=sub.id,
+            ai_score=state["ai_score"] or 0,
+            percentage=state.get("percentage") or 0.0,
+            grade=state.get("grade") or "F",
+            strengths=state.get("strengths") or "",
+            areas_of_improvement=state.get("areas_of_improvement") or "",
+            missing_points=state.get("missing_points") or "",
+            suggestions=state.get("suggestions") or "",
+            overall_feedback=state.get("overall_feedback") or "",
+            detailed_feedback=state.get("overall_feedback") or "",
+            rubric_breakdown=json.dumps(state.get("rubric_breakdown") or {}),
             extracted_text=state.get("extracted_text"),
         )
-        db.add(eval_report)
-        submission.status = SubmissionStatus.EVALUATED
+        db.add(report)
+        sub.status = SubmissionStatus.EVALUATED
         await db.commit()
 
-        # Check if all submissions for this assignment are now terminal
-        await _check_all_evaluated(db, assignment)
+        # ── Step 5: Notify student ────────────────────────────────────────
+        from app.models.user import User
+        student = await db.get(User, sub.student_id)
+        await notif_svc.create_notification(
+            db, sub.student_id, NotificationType.EVALUATION_COMPLETE,
+            "Assignment Evaluated",
+            f"Your submission for '{a.title}' has been evaluated. Score: {state['ai_score']}/{a.max_marks}",
+            reference_id=a.id, reference_type="assignment",
+        )
+        if student:
+            from app.services.email import send_email
+            await send_email(
+                student.email,
+                f"Evaluation Complete: {a.title}",
+                f"<p>Your submission for <strong>{a.title}</strong> has been evaluated.</p>"
+                f"<p>Score: <strong>{state['ai_score']}/{a.max_marks}</strong> ({state.get('grade', '')})</p>"
+                f"<p>Log in to view detailed feedback.</p>",
+            )
         await db.commit()
+
+        # Check if all submissions for this assignment are done
+        await _check_all_evaluated(db, a)
+        await db.commit()
+
+
+async def _get_text_for_submission(sub) -> str:
+    """Get extracted text for a submission (PDF or text type)."""
+    from app.models.submission import SubmissionType
+    if sub.submission_type == SubmissionType.TEXT:
+        return sub.text_content or ""
+    if not sub.file_url:
+        return ""
+    try:
+        import httpx
+        from app.services.pdf_processor import extract_text_from_pdf
+        r = httpx.get(sub.file_url, timeout=30)
+        text, _ = extract_text_from_pdf(r.content)
+        return text
+    except Exception:
+        return ""
 
 
 async def _check_all_evaluated(db, assignment):
-    """Notify professor when all submissions have reached terminal status."""
     from app.models.submission import Submission, SubmissionStatus
     from app.models.notification import NotificationType
     from app.services import notification as notif_svc
@@ -264,50 +236,41 @@ async def _check_all_evaluated(db, assignment):
     from app.models.user import User
     from sqlalchemy import select
 
-    terminal_statuses = [
-        SubmissionStatus.EVALUATED,
-        SubmissionStatus.EXTRACTION_FAILED,
-        SubmissionStatus.EVALUATION_FAILED,
-        SubmissionStatus.REJECTED,
+    terminal = [
+        SubmissionStatus.EVALUATED, SubmissionStatus.EXTRACTION_FAILED,
+        SubmissionStatus.EVALUATION_FAILED, SubmissionStatus.REJECTED,
     ]
-    non_terminal_result = await db.execute(
+    pending = (await db.execute(
         select(Submission).where(
             Submission.assignment_id == assignment.id,
-            Submission.status.notin_(terminal_statuses),
+            Submission.status.notin_(terminal),
         )
-    )
-    non_terminal = non_terminal_result.scalars().all()
+    )).scalars().all()
 
-    if not non_terminal:
-        # All done — notify professor
+    if not pending:
+        professor = await db.get(User, assignment.created_by)
         await notif_svc.create_notification(
-            db, assignment.created_by,
-            NotificationType.EVALUATION_COMPLETE,
-            "Evaluation Complete",
+            db, assignment.created_by, NotificationType.EVALUATION_COMPLETE,
+            "All Submissions Evaluated",
             f"All submissions for '{assignment.title}' have been evaluated.",
-            reference_id=assignment.id, reference_type="assignment"
+            reference_id=assignment.id, reference_type="assignment",
         )
-        prof_result = await db.execute(
-            select(User).where(User.id == assignment.created_by)
-        )
-        professor = prof_result.scalar_one_or_none()
         if professor:
-            await send_evaluation_complete_email(
-                professor.email, professor.name, assignment.title
-            )
+            await send_evaluation_complete_email(professor.email, professor.name, assignment.title)
 
+
+# ── Deadline reminder task ────────────────────────────────────────────────────
 
 @celery_app.task(name="check_deadline_reminders")
 def check_deadline_reminders():
-    """Send 24-hour deadline reminders to students who haven't submitted."""
-    _run_async(_check_deadline_reminders_async())
+    _run_async(_deadline_reminders_async())
 
 
-async def _check_deadline_reminders_async():
+async def _deadline_reminders_async():
     from datetime import datetime, timezone, timedelta
     from app.database import AsyncSessionLocal
     from app.models.assignment import Assignment, AssignmentStatus
-    from app.models.academic import SectionEnrollment
+    from app.models.academic import StudentEnrollment
     from app.models.submission import Submission, SubmissionStatus
     from app.models.user import User
     from app.models.notification import NotificationType
@@ -316,61 +279,47 @@ async def _check_deadline_reminders_async():
     from sqlalchemy import select
 
     now = datetime.now(timezone.utc)
-    reminder_window_start = now + timedelta(hours=23, minutes=55)
-    reminder_window_end = now + timedelta(hours=24, minutes=5)
+    window_start = now + timedelta(hours=23, minutes=55)
+    window_end = now + timedelta(hours=24, minutes=5)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
+        assignments = (await db.execute(
             select(Assignment).where(
                 Assignment.status == AssignmentStatus.ACTIVE,
-                Assignment.deadline >= reminder_window_start,
-                Assignment.deadline <= reminder_window_end,
+                Assignment.deadline >= window_start,
+                Assignment.deadline <= window_end,
             )
-        )
-        assignments = result.scalars().all()
+        )).scalars().all()
 
-        for assignment in assignments:
-            # Get enrolled students
-            enrolled_result = await db.execute(
-                select(SectionEnrollment).where(
-                    SectionEnrollment.section_id == assignment.section_id
-                )
-            )
-            enrollments = enrolled_result.scalars().all()
+        for a in assignments:
+            enrollments = (await db.execute(
+                select(StudentEnrollment).where(StudentEnrollment.semester_id == a.semester_id)
+            )).scalars().all()
 
-            for enrollment in enrollments:
-                # Check if student has submitted
-                sub_result = await db.execute(
+            for enr in enrollments:
+                existing = (await db.execute(
                     select(Submission).where(
-                        Submission.assignment_id == assignment.id,
-                        Submission.student_id == enrollment.student_id,
+                        Submission.assignment_id == a.id,
+                        Submission.student_id == enr.student_id,
                         Submission.status != SubmissionStatus.REJECTED,
                     )
-                )
-                existing = sub_result.scalar_one_or_none()
+                )).scalar_one_or_none()
                 if existing:
                     continue
 
-                # Send reminder
-                student_result = await db.execute(
-                    select(User).where(User.id == enrollment.student_id)
-                )
-                student = student_result.scalar_one_or_none()
+                student = await db.get(User, enr.student_id)
                 if not student:
                     continue
 
                 await notif_svc.create_notification(
-                    db, student.id,
-                    NotificationType.DEADLINE_REMINDER,
+                    db, student.id, NotificationType.DEADLINE_REMINDER,
                     "Deadline Reminder",
-                    f"The deadline for '{assignment.title}' is in 24 hours.",
-                    reference_id=assignment.id, reference_type="assignment"
+                    f"'{a.title}' deadline is in 24 hours.",
+                    reference_id=a.id, reference_type="assignment",
                 )
                 await send_deadline_reminder_email(
-                    student.email,
-                    student.name,
-                    assignment.title,
-                    assignment.deadline.strftime("%Y-%m-%d %H:%M UTC"),
+                    student.email, student.name, a.title,
+                    a.deadline.strftime("%Y-%m-%d %H:%M UTC"),
                 )
 
         await db.commit()
