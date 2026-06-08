@@ -46,6 +46,9 @@ async def _get_semester_for_college(db: AsyncSession, semester_id: str, college_
 async def dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_college_admin),
+    course_id: str | None = None,
+    branch_id: str | None = None,
+    semester_id: str | None = None,
 ):
     cid = current_user.college_id
     from app.models.assignment import Assignment
@@ -59,8 +62,8 @@ async def dashboard(
         select(func.count(User.id)).where(User.college_id == cid, User.role == UserRole.PROFESSOR, User.status == UserStatus.ACTIVE)
     ) or 0
 
-    # Assignments belonging to this college's semesters
-    college_semesters = await _get_college_semester_ids(db, cid)
+    # Assignments belonging to this college's semesters (optionally filtered)
+    college_semesters = await _get_college_semester_ids(db, cid, course_id=course_id, branch_id=branch_id, semester_id=semester_id)
     total_assignments = await db.scalar(
         select(func.count(Assignment.id)).where(Assignment.semester_id.in_(college_semesters))
     ) or 0
@@ -534,11 +537,24 @@ async def remove_professor(semester_id: str, professor_id: str, db: AsyncSession
 
 # ── Private helper ────────────────────────────────────────────────────────────
 
-async def _get_college_semester_ids(db: AsyncSession, college_id: str) -> list[str]:
+async def _get_college_semester_ids(db: AsyncSession, college_id: str, course_id: str | None = None, branch_id: str | None = None, semester_id: str | None = None) -> list[str]:
+    # If a specific semester is requested, validate it belongs to this college
+    if semester_id:
+        try:
+            await _get_semester_for_college(db, semester_id, college_id)
+            return [semester_id]
+        except Exception:
+            return []
+
     courses = (await db.execute(select(Course).where(Course.college_id == college_id))).scalars().all()
+    if course_id:
+        courses = [c for c in courses if c.id == course_id]
+
     ids = []
     for c in courses:
         branches = (await db.execute(select(Branch).where(Branch.course_id == c.id))).scalars().all()
+        if branch_id:
+            branches = [b for b in branches if b.id == branch_id]
         for b in branches:
             sems = (await db.execute(select(Semester).where(Semester.branch_id == b.id))).scalars().all()
             ids.extend(s.id for s in sems)

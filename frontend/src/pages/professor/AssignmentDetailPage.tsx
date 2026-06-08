@@ -335,12 +335,15 @@ function EvaluationPanel({ submissionId }: { submissionId: string }) {
   const { data: report, isLoading } = useQuery({
     queryKey: ['eval', submissionId],
     queryFn: async () => (await api.get(`/submissions/${submissionId}/evaluation`)).data as EvaluationReport & {
-      percentage?: number; grade?: string; missing_points?: string; suggestions?: string; overall_feedback?: string
+      percentage?: number; grade?: string; missing_points?: string; suggestions?: string;
+      overall_feedback?: string; rubric_breakdown?: Record<string, { max_score: number; obtained_score: number; comment: string }>
     },
   })
 
   if (isLoading) return <div className="flex justify-center py-4"><Spinner /></div>
   if (!report) return <p className="text-sm text-gray-400 text-center py-4">No report available.</p>
+
+  const rubricEntries = Object.entries(report.rubric_breakdown ?? {})
 
   return (
     <div className="space-y-3">
@@ -366,7 +369,40 @@ function EvaluationPanel({ submissionId }: { submissionId: string }) {
             <p className="text-xs text-gray-400">Grade</p>
           </div>
         )}
+        {/* Progress bar */}
+        {report.percentage != null && (
+          <div className="flex-1">
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div className={cn('h-full rounded-full transition-all',
+                report.percentage >= 70 ? 'bg-green-500' :
+                report.percentage >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+              )} style={{ width: `${report.percentage}%` }} />
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Rubric breakdown */}
+      {rubricEntries.length > 0 && (
+        <div className="rounded-lg bg-white border border-gray-200 p-3">
+          <p className="text-xs font-semibold text-gray-600 mb-2">Rubric Breakdown</p>
+          <div className="space-y-2">
+            {rubricEntries.map(([criterion, data]) => (
+              <div key={criterion}>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-gray-700 capitalize">{criterion.replace(/_/g, ' ')}</span>
+                  <span className="text-gray-500">{data.obtained_score}/{data.max_score}</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-primary-500"
+                    style={{ width: `${data.max_score > 0 ? (data.obtained_score / data.max_score) * 100 : 0}%` }} />
+                </div>
+                {data.comment && <p className="text-[11px] text-gray-400 mt-0.5">{data.comment}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-2 gap-3">
         {report.strengths && (

@@ -49,11 +49,12 @@ export default function StudentAssignmentsPage() {
     queryKey: ['student-dashboard'],
     queryFn: async () => {
       const res = await api.get('/student/dashboard')
-      return res.data as { sections: SemesterData[] }
+      return res.data as { semesters: SemesterData[] }
     },
+    refetchInterval: 30_000,
   })
 
-  const sections: SemesterData[] = dashboard?.sections ?? []
+  const sections: SemesterData[] = dashboard?.semesters ?? []
 
   // Flatten assignments for each tab, enriching with semester info
   const itemsForTab: AssignmentItem[] = sections.flatMap((s) => {

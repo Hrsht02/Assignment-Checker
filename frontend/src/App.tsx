@@ -31,6 +31,10 @@ import StudentResultsPage from './pages/student/StudentResultsPage'
 // Shared
 import NotificationsPage from './pages/NotificationsPage'
 import NotFoundPage from './pages/NotFoundPage'
+import OrgSettingsPage from './pages/org/OrgSettingsPage'
+import CollegeReportsPage from './pages/college/CollegeReportsPage'
+import ProfessorSubmissionsPage from './pages/professor/ProfessorSubmissionsPage'
+import ProfessorReportsPage from './pages/professor/ProfessorReportsPage'
 
 // ── Route Guards ──────────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ export default function App() {
           <Route index element={<OrgDashboard />} />
           <Route path="colleges" element={<CollegesPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="settings" element={<PlaceholderPage text="Platform settings coming soon." />} />
+          <Route path="settings" element={<OrgSettingsPage />} />
         </Route>
 
         {/* ── College Admin ── */}
@@ -83,7 +87,7 @@ export default function App() {
           <Route path="professors" element={<ProfessorsPage />} />
           <Route path="students" element={<StudentsPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="reports" element={<PlaceholderPage text="Reports generated after assignment deadlines appear here." />} />
+          <Route path="reports" element={<CollegeReportsPage />} />
         </Route>
 
         {/* ── Professor ── */}
@@ -93,8 +97,8 @@ export default function App() {
           <Route path="assignments/:assignmentId" element={<AssignmentDetailPage />} />
           <Route path="sections/:sectionId" element={<SectionPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="submissions" element={<PlaceholderPage text="Select an assignment to view its submissions." />} />
-          <Route path="reports" element={<PlaceholderPage text="Trigger reports from an assignment detail page." />} />
+          <Route path="submissions" element={<ProfessorSubmissionsPage />} />
+          <Route path="reports" element={<ProfessorReportsPage />} />
         </Route>
 
         {/* ── Student ── */}
@@ -110,13 +114,5 @@ export default function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
-  )
-}
-
-function PlaceholderPage({ text }: { text: string }) {
-  return (
-    <div className="flex items-center justify-center h-64 text-sm text-gray-400 p-8 text-center">
-      {text}
-    </div>
   )
 }
